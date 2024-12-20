@@ -1,162 +1,196 @@
 #include <iostream>
-#include <string>
-#include <memory>
 #include <vector>
+#include <string>
+#include <algorithm>
 
 using namespace std;
 
-// Xác định cấu trúc cho nút cây
-struct TreeNode
-{
-    string name;
-    int pages;
-    vector<shared_ptr<TreeNode>> children;
+// Cấu trúc Node biểu diễn một mục trong sách
+struct Node {
+    string title;            // Tên mục
+    int startPage;           // Trang bắt đầu
+    int endPage;             // Trang kết thúc
+    vector<Node*> subSections;    // Danh sách các mục con
+    Node* parent;            // Con trỏ đến mục cha
 
-    TreeNode(const string &name, int pages) : name(name), pages(pages){}    
+    Node(string t, int start, int end, Node* p = nullptr)
+        : title(t), startPage(start), endPage(end), parent(p) {}
+
+    // Cập nhật lại số trang của mục này và tất cả các mục cha
+    void updatePageNumbers() {
+        if (subSections.empty()) return;
+
+        startPage = subSections.front()->startPage; // Trang bắt đầu là của con đầu tiên
+        endPage = subSections.back()->endPage;   // Trang kết thúc là của con cuối cùng
+
+        if (parent) {
+            parent->updatePageNumbers();
+        }
+    }
+
+    // Cập nhật lại số trang của tất cả các mục con sau khi mục cha bị xóa
+    void updateChildPagesAfterDeletion(int pageOffset) {
+        for (auto sub : subSections) {
+            sub->startPage -= pageOffset;
+            sub->endPage -= pageOffset;
+            sub->updateChildPagesAfterDeletion(pageOffset);
+        }
+    }
+
+    ~Node() { // Destructor để giải phóng bộ nhớ
+        for (Node* sub : subSections) {
+            delete sub;
+        }
+    }
 };
 
-// Hàm thêm nút con
-void addChild(shared_ptr<TreeNode> parent, shared_ptr<TreeNode> child) 
-{
-    parent->children.push_back(child);
-}
+// Hàm đếm số chương trong cây
+int countChapters(Node* root) {
+    if (!root) return 0;
 
-// Đếm số chương (con trực tiếp từ gốc)
-int countChapters(shared_ptr<TreeNode> root)
-{
-    if (!root)
-    {
-        return 0;
+    int count = 0;
+    if (root->title.find("Chapter") == 0) {
+        count = 1;
     }
-    return root->children.size();
+
+    for (auto sub : root->subSections) {
+        count += countChapters(sub);
+    }
+
+    return count;
 }
 
 // Hàm tìm chương dài nhất
-void findLongestChapter(shared_ptr<TreeNode> node, int &maxPages, shared_ptr<TreeNode> &LongestChapter)
-{
-    if(!node)
-    {
-        return;
-    }
-    
-    if(node->pages > maxPages)
-    {
-        maxPages = node->pages;
-        LongestChapter = node;
+Node* findLongestChapter(Node* root, Node* longestChapter = nullptr) {
+    if (!root) return longestChapter;
+
+    if (root->title.find("Chapter") == 0) {
+        int length = root->endPage - root->startPage + 1;
+        if (!longestChapter || length > (longestChapter->endPage - longestChapter->startPage + 1)) {
+            longestChapter = root;
+        }
     }
 
-    for(const auto &child : node->children)
-    {
-        findLongestChapter(child, maxPages, LongestChapter);
-    }
-}
-
-// Tìm chương dài nhất
-shared_ptr<TreeNode> getLongestChapter(shared_ptr<TreeNode> root)
-{
-    int maxPages = 0;
-    shared_ptr<TreeNode> longestChapter = nullptr;
-
-    // Kiểm tra gốc
-    findLongestChapter(root, maxPages, longestChapter);
-
-    // Kiểm tra các con của gốc
-    for(const auto &child : root->children)
-    {
-        findLongestChapter(child, maxPages, longestChapter);
+    for (auto sub : root->subSections) {
+        longestChapter = findLongestChapter(sub, longestChapter);
     }
 
     return longestChapter;
 }
 
-// Tìm và xóa node theo tên
-bool deleteNode(shared_ptr<TreeNode> parent, const string &name)
-{
-    if(!parent)
-    {
-        return false;
-    }
+// Hàm xóa mục con và cập nhật lại số trang 
+bool deleteSection(Node* root, const string& title) {
+    if (!root) return false;
 
-    for(auto it = parent->children.begin(); it != parent->children.end(); ++it)
-    {
-        if((*it)-> name == name)
-        {
-            parent->children.erase(it);
-            return true; // Xóa thành công
-        }
-    }
+    for (auto it = root->subSections.begin(); it != root->subSections.end();) {
+        if ((*it)->title == title) {
+            int pageOffset = (*it)->endPage - (*it)->startPage + 1;
 
-    for(auto &child : parent->children)
-    {
-        if(deleteNode(child, name)) 
-        {
+            delete *it; // Giải phóng bộ nhớ của node bị xóa
+            it = root->subSections.erase(it); // Xóa node khỏi vector và nhận iterator mới
+
+            // Cập nhật số trang của các mục cha
+            if (root->parent) {
+                root->parent->updatePageNumbers();
+                root->parent->updateChildPagesAfterDeletion(pageOffset);
+            } else { // Nếu là con trực tiếp của root thì cập nhật root
+                root->updatePageNumbers();
+                root->updateChildPagesAfterDeletion(pageOffset);
+            }
+
             return true;
+        } else {
+            // Đệ quy tìm và xóa trong các mục con
+            if (deleteSection(*it, title)) {
+                // Cập nhật số trang của các mục cha sau khi xóa
+                if (root->parent) {
+                    root->parent->updatePageNumbers();
+                } else {
+                    root->updatePageNumbers();
+                }
+                return true;
+            }
+            ++it; // Chỉ tăng iterator nếu không xóa
         }
     }
 
     return false;
 }
 
-// Hàm in cây ̣(gỡ lỗi)
-void printTree(shared_ptr<TreeNode> node, int level)
-{
-    if(!node)
-    {
-        return;
-    }
-
-    for(int i = 0; i < level; ++i)
-    {
-        cout << " ";
-    }
-
-    cout << node->name << " (" << node->pages << " pages)\n";
-
-    for(const auto &child : node->children)
-    {
-        printTree(child, level + 1);
+// Hàm hiển thị cây mục lục
+void printTree(Node* root, int depth = 0) {
+    if (!root) return;
+    for (int i = 0; i < depth; ++i) cout << "  ";
+    cout << root->title << " (" << root->startPage << "-" << root->endPage << ")" << endl;
+    for (auto sub : root->subSections) {
+        printTree(sub, depth + 1);
     }
 }
 
-int main()
-{
-    auto book = make_shared<TreeNode>("Book", 0);
+int main() {
+    // Tạo cây mục lục
+    Node* root = new Node("Science Book", 1, 300);
 
-    auto chapter1 = make_shared<TreeNode>("Chapter 1", 30);
-    auto chapter2 = make_shared<TreeNode>("Chapter 2", 50);
-    auto chapter3 = make_shared<TreeNode>("Chapter 3", 40);
+    // Tạo các chương
+    Node* chapter1 = new Node("Chapter 1: Physics", 1, 50, root);
+    Node* chapter2 = new Node("Chapter 2: Chemistry", 51, 120, root);
+    Node* chapter3 = new Node("Chapter 3: Biology", 121, 210, root);
+    Node* chapter4 = new Node("Chapter 4: Astronomy", 211, 240, root);
+    Node* chapter5 = new Node("Chapter 5: Geology", 241, 300, root);
 
-    addChild(book, chapter1);
-    addChild(book, chapter2);
-    addChild(book, chapter3);
+    // Tạo các mục con trong Chapter 2 (Chemistry)
+    Node* section21 = new Node("Section 2.1: Atomic Structure", 51, 80, chapter2);
+    Node* section22 = new Node("Section 2.2: Chemical Reactions", 81, 100, chapter2);
+    Node* section23 = new Node("Section 2.3: Organic Chemistry", 101, 120, chapter2);
 
-    auto section1 = make_shared<TreeNode>("Section 1.1", 10);
-    auto section2 = make_shared<TreeNode>("Section 1.2", 20);
-    addChild(chapter1, section1);
-    addChild(chapter1, section2);
+    // Tạo các mục con trong Chapter 3 (Biology)
+    Node* section31 = new Node("Section 3.1: Cell Biology", 121, 140, chapter3);
+    Node* section32 = new Node("Section 3.2: Genetics", 141, 160, chapter3);
+    Node* section33 = new Node("Section 3.3: Evolution", 161, 210, chapter3);
 
-    cout << "Initial book structure:\n";
-    printTree(book, 0);
+    // Gắn các mục con vào các chương
+    chapter2->subSections.push_back(section21);
+    chapter2->subSections.push_back(section22);
+    chapter2->subSections.push_back(section23);
 
-    cout << "\nNumber of chapters: " << countChapters(book) << "\n";
+    chapter3->subSections.push_back(section31);
+    chapter3->subSections.push_back(section32);
+    chapter3->subSections.push_back(section33);
 
-    auto longestChapter = getLongestChapter(book);
-    if(longestChapter)
-    {
-        cout << "Longest chapter: " << longestChapter->name << " (" << longestChapter->pages << " pages)\n";
+    // Gắn các chương vào cây mục lục
+    root->subSections.push_back(chapter1);
+    root->subSections.push_back(chapter2);
+    root->subSections.push_back(chapter3);
+    root->subSections.push_back(chapter4);
+    root->subSections.push_back(chapter5);
+
+    // Hiển thị cây mục lục ban đầu
+    cout << "---- Initial Table of Contents ----" << endl;
+    printTree(root);
+
+    // Đếm số chương trong sách
+    cout << "\nNumber of chapters: " << countChapters(root) << endl;
+
+    // Tìm chương dài nhất
+    Node* longestChapter = findLongestChapter(root);
+    cout << "\nLongest Chapter: " << longestChapter->title << " (" 
+         << longestChapter->startPage << "-" << longestChapter->endPage << ")" << endl;
+
+    // Thực hiện xóa một mục con
+    string sectionToDelete = "Section 3.2: Genetics";
+    cout << "\nDeleting '" << sectionToDelete << "'..." << endl;
+    if (deleteSection(root, sectionToDelete)) {
+        cout << "'" << sectionToDelete << "' has been deleted." << endl;
+    } else {
+        cout << "Could not delete '" << sectionToDelete << "'." << endl;
     }
-    else
-    {
-        cout << "No chapters found.\n";
-    }
 
-    if (!deleteNode(book, "Section 1.1"))
-    {
-        cout << "Node not found for deletion.\n";
-    }
+    // Hiển thị cây sau khi xóa mục con
+    cout << "\n---- Table of Contents After Deletion ----" << endl;
+    printTree(root);
 
-    cout << "\nAfter deleting Section 1.1:\n";
-    printTree(book, 0);
+    // Giải phóng bộ nhớ
+    delete root;
 
     return 0;
 }
